@@ -2,7 +2,7 @@ from mininet.net import Mininet
 from mininet.node import RemoteController, Controller
 from mininet.cli import CLI
 from mininet.log import setLogLevel
-
+import time
 import subprocess
 
 def print_fdb(switch):
@@ -14,9 +14,22 @@ def print_fdb(switch):
         )
         entries = parse_fdb(output)
         for e in entries:
-            print("Port: {}, MAC: {}, Age: {}").format(
+            #print(e)
+            data = {
+                "event_type": "mac_entry",
+                "switch": switch,
+                "port": e["port"],
+                "vlan": e["vlan"],
+                "mac": e["mac"],
+                "age": e["age"],
+                "timestamp": int(time.time())
+            }
+            print(data)
+
+            '''print("Port: {}, MAC: {}, Age: {}").format(
                 e["port"], e["mac"], e["age"]
-            )
+            )'''
+
     except Exception as e:
         print("Error:", e)
 
@@ -35,6 +48,48 @@ def parse_fdb(output):
             })
 
     return result
+
+def get_port_info(port_name):
+    port_info  = {}
+    for port in port_name:
+
+        #About interface 
+        unicode_info = subprocess.check_output(["ovs-vsctl", "get", "interface", port, "admin_state", "link_state", "ofport", "duplex", "link_speed", "mtu"]).decode().split()
+        print(unicode_info)
+        info = [str(x) for x in unicode_info]
+        if info[0] == 'up' and info[1] == 'up' and info[2] != '-1':
+            status = "up"
+        
+        
+        info_data = { "status":status,
+                    "duplex":info[3],
+                    "speed":info[4],
+                    "mtu":info[5]                     
+            }
+        port_info[port] = info_data
+
+    #print(port_info)
+    return port_info
+    
+
+def get_portname():
+    port_name = []
+    try:
+        for bridge in subprocess.check_output(["ovs-vsctl", "list-br"]).decode().split(): #it gives byte object as output without decode()
+            ports = subprocess.check_output(["ovs-vsctl", "list-ports", bridge]).decode().split()
+            #print(bridge, ports)
+            for port in ports: #converting unicode str into string
+                port_name.append(str(port))
+        
+        #print(port_name)
+
+        return port_name
+
+    except Exception as e:
+        print("Error:", e)
+        return []
+
+
 
 def topology():
 
@@ -88,15 +143,34 @@ def topology():
     """
 
     # VLAN tagging
-#    s1.cmd("ovs-vsctl set port s1-eth1 tag=10")
-#    s1.cmd("ovs-vsctl set port s1-eth2 tag=20")
-#    s1.cmd("ovs-vsctl set port s1-eth3 tag=30")
-#    s1.cmd("ovs-vsctl set port s1-eth4 tag=40")
+    s1.cmd("ovs-vsctl set port s1-eth1 tag=10")
+    s1.cmd("ovs-vsctl set port s1-eth2 tag=10")
+    s1.cmd("ovs-vsctl set port s1-eth3 tag=20")
+    s1.cmd("ovs-vsctl set port s1-eth4 tag=20")
 
-#    s2.cmd("ovs-vsctl set port s2-eth1 tag=10")
-#    s2.cmd("ovs-vsctl set port s2-eth2 tag=20")
-#    s2.cmd("ovs-vsctl set port s2-eth3 tag=30")
-#    s2.cmd("ovs-vsctl set port s2-eth4 tag=40")
+    s2.cmd("ovs-vsctl set port s2-eth1 tag=10")
+    s2.cmd("ovs-vsctl set port s2-eth2 tag=10")
+    s2.cmd("ovs-vsctl set port s2-eth3 tag=20")
+    s2.cmd("ovs-vsctl set port s2-eth4 tag=20")
+
+    # trunk link between switches
+    s1.cmd("ovs-vsctl set port s1-eth5 trunks=10,20")
+    s2.cmd("ovs-vsctl set port s2-eth5 trunks=10,20")
+
+    '''
+    print("Running pingall after VLAN tagging...\n")
+    # net.pingAll()
+    net.pingAll(timeout=0.5) #it takes less time compared to normal pingAll
+
+    # Print MAC tables After VALN Tagging
+    print_fdb("s1")
+    print_fdb("s2")
+    '''
+
+    #fetch port_names
+    port_name = get_portname()
+    get_port_info(port_name)
+
 
     CLI(net)
     net.stop()
