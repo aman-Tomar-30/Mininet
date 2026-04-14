@@ -4,6 +4,7 @@ from mininet.cli import CLI
 from mininet.log import setLogLevel
 import time
 import subprocess
+import csv
 
 def print_fdb(switch):
     print("\n===== MAC TABLE for {} =====").format(switch)
@@ -54,14 +55,27 @@ def get_port_info(port_name):
     for port in port_name:
 
         #About interface 
-        unicode_info = subprocess.check_output(["ovs-vsctl", "get", "interface", port, "admin_state", "link_state", "ofport", "duplex", "link_speed", "mtu"]).decode().split()
-        print(unicode_info)
+        unicode_info = subprocess.check_output(["ovs-vsctl", "get", "interface", port, "admin_state", "link_state", "ofport", "duplex", "link_speed", "mtu"]).decode("utf-8").split()
+        #print(unicode_info)
         info = [str(x) for x in unicode_info]
         if info[0] == 'up' and info[1] == 'up' and info[2] != '-1':
             status = "up"
+
+        #About link
+            unicode_link_info = subprocess.check_output(["ovs-vsctl", "--columns=tag,trunks,vlan_mode", "--format=csv", "--no-headings", "list", "port",  port]).decode("utf-8").strip()
+            #print(unicode_link_info)
+            link_info = next(csv.reader([unicode_link_info])) 
+            #print(link_info)
+            vlan = None
+            if link_info[0] != '[]': # when link is access
+                vlan = link_info[0]
+            else:
+                vlan = link_info[1] #when link is trunk
         
         
-        info_data = { "status":status,
+        info_data = {"status":status,
+                    "vlan":vlan,
+                    "vlan_mode":link_info[2],
                     "duplex":info[3],
                     "speed":info[4],
                     "mtu":info[5]                     
@@ -75,8 +89,8 @@ def get_port_info(port_name):
 def get_portname():
     port_name = []
     try:
-        for bridge in subprocess.check_output(["ovs-vsctl", "list-br"]).decode().split(): #it gives byte object as output without decode()
-            ports = subprocess.check_output(["ovs-vsctl", "list-ports", bridge]).decode().split()
+        for bridge in subprocess.check_output(["ovs-vsctl", "list-br"]).decode("utf-8").split(): #it gives byte object as output without decode()
+            ports = subprocess.check_output(["ovs-vsctl", "list-ports", bridge]).decode("utf-8").split()
             #print(bridge, ports)
             for port in ports: #converting unicode str into string
                 port_name.append(str(port))
@@ -89,6 +103,21 @@ def get_portname():
         print("Error:", e)
         return []
 
+def vlan_info(port_info):
+    vlan_map = {}
+
+    for port, data in port_info.items():
+        vlan_id = data['vlan']
+
+        if vlan_id not in vlan_map:
+            vlan_map[vlan_id] = {} 
+            vlan_map[vlan_id]["ports"] = [] # port list
+
+        vlan_map[vlan_id]["ports"].append(port)
+        vlan_map[vlan_id]["type"] = data['vlan_mode'] 
+
+    #print(vlan_map)
+    return vlan_map
 
 
 def topology():
@@ -125,7 +154,8 @@ def topology():
     #net.addLink(s1, s2)
 
     net.start()
-    
+
+    #Completely remove dependencies of controller over switches acts as normal learning switch    
     s1.cmd("ovs-vsctl set-fail-mode s1 standalone")
     s2.cmd("ovs-vsctl set-fail-mode s2 standalone")
 
@@ -137,25 +167,25 @@ def topology():
     print_fdb("s2")
 
     """
-    STP Check
+    #STP Check
     s1.cmd("ovs-vsctl set Bridge s1 stp_enable=true")
     s2.cmd("ovs-vsctl set Bridge s2 stp_enable=true")
     """
 
     # VLAN tagging
-    s1.cmd("ovs-vsctl set port s1-eth1 tag=10")
-    s1.cmd("ovs-vsctl set port s1-eth2 tag=10")
-    s1.cmd("ovs-vsctl set port s1-eth3 tag=20")
-    s1.cmd("ovs-vsctl set port s1-eth4 tag=20")
+    s1.cmd("ovs-vsctl set port s1-eth1 tag=10 vlan_mode=access")
+    s1.cmd("ovs-vsctl set port s1-eth2 tag=10 vlan_mode=access")
+    s1.cmd("ovs-vsctl set port s1-eth3 tag=20 vlan_mode=access")
+    s1.cmd("ovs-vsctl set port s1-eth4 tag=20 vlan_mode=access")
 
-    s2.cmd("ovs-vsctl set port s2-eth1 tag=10")
-    s2.cmd("ovs-vsctl set port s2-eth2 tag=10")
-    s2.cmd("ovs-vsctl set port s2-eth3 tag=20")
-    s2.cmd("ovs-vsctl set port s2-eth4 tag=20")
+    s2.cmd("ovs-vsctl set port s2-eth1 tag=10 vlan_mode=access")
+    s2.cmd("ovs-vsctl set port s2-eth2 tag=10 vlan_mode=access")
+    s2.cmd("ovs-vsctl set port s2-eth3 tag=20 vlan_mode=access")
+    s2.cmd("ovs-vsctl set port s2-eth4 tag=20 vlan_mode=access")
 
     # trunk link between switches
-    s1.cmd("ovs-vsctl set port s1-eth5 trunks=10,20")
-    s2.cmd("ovs-vsctl set port s2-eth5 trunks=10,20")
+    s1.cmd("ovs-vsctl set port s1-eth5 trunks=10,20 vlan_mode=trunk")
+    s2.cmd("ovs-vsctl set port s2-eth5 trunks=10,20 vlan_mode=trunk")
 
     '''
     print("Running pingall after VLAN tagging...\n")
@@ -169,8 +199,12 @@ def topology():
 
     #fetch port_names
     port_name = get_portname()
-    get_port_info(port_name)
+    
+    #fetch port info
+    port_info = get_port_info(port_name)
 
+    #fetch ports in a particular vlan
+    vlan_data = vlan_info(port_info)
 
     CLI(net)
     net.stop()
