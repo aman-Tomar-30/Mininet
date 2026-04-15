@@ -1,9 +1,9 @@
 from mininet.net import Mininet
-from mininet.node import RemoteController, Controller
+from mininet.node import Controller
 from mininet.cli import CLI
 from mininet.log import setLogLevel
 import time
-import subprocess
+import subprocess #run command in linux and gets output
 import csv
 
 def print_fdb(switch):
@@ -90,8 +90,9 @@ def get_portname():
     port_name = []
     try:
         for bridge in subprocess.check_output(["ovs-vsctl", "list-br"]).decode("utf-8").split(): #it gives byte object as output without decode()
-            ports = subprocess.check_output(["ovs-vsctl", "list-ports", bridge]).decode("utf-8").split()
+            ports = subprocess.check_output(["ovs-vsctl", "list-ports", bridge]).decode("utf-8").split() #give ports name associated with particular bridge
             #print(bridge, ports)
+            
             for port in ports: #converting unicode str into string
                 port_name.append(str(port))
         
@@ -109,7 +110,7 @@ def vlan_info(port_info):
     for port, data in port_info.items():
         vlan_id = data['vlan']
 
-        if vlan_id not in vlan_map:
+        if vlan_id not in vlan_map: #multiple ports have same vlan
             vlan_map[vlan_id] = {} 
             vlan_map[vlan_id]["ports"] = [] # port list
 
@@ -119,6 +120,55 @@ def vlan_info(port_info):
     #print(vlan_map)
     return vlan_map
 
+def get_stats_info(port_name):
+    stats_info = {}
+    for port in port_name:
+        output = subprocess.check_output(["ovs-vsctl", "get", "interface", port, "statistics"]).decode("utf-8").strip()
+        #print(output) 
+        all_stats = parse_stat_map(output) #give python dict
+
+        #total error is sum of all errors
+        total_error = (
+            all_stats.get("rx_over_err", 0) +  # if value not present it raise an error, so give it 0
+            all_stats.get("rx_frame_err", 0) +
+            all_stats.get("tx_errors", 0) +
+            all_stats.get("rx_crc_err", 0) +
+            all_stats.get("rx_missed_errors", 0)
+        )
+              
+        #total drops is sum of sending and receiving drops 
+        total_drops = (
+            all_stats.get("tx_dropped", 0) +  # if value not present it raise an error, so give it 0
+            all_stats.get("rx_dropped", 0)
+        )
+
+        stats_info[port] = {
+            "rx_packets": all_stats["rx_packets"], #incoming traffic
+            "tx_packets": all_stats["tx_packets"], #outgoinf traffic
+            "rx_bytes": all_stats["rx_bytes"],
+            "tx_bytes": all_stats["tx_bytes"],
+            "errors": total_error,
+            "drops": total_drops
+        }
+    
+    #print(stats_info)
+    return stats_info
+
+
+def parse_stat_map(output):
+    output = output.strip("{} \n")
+    #print(output)
+    result = {}
+    if not output:
+        return result
+
+    for item in output.split(","): # using of .split(), stats values with = between them split into list 
+        #print(item)
+        if "=" in item:
+            k, v = item.split("=") # divide "collisions=0" -> [u"collisions", "0"]
+            result[str(k.strip())] = int(v.strip()) #str() - convert unicode string
+
+    return result
 
 def topology():
 
@@ -158,16 +208,18 @@ def topology():
     #Completely remove dependencies of controller over switches acts as normal learning switch    
     s1.cmd("ovs-vsctl set-fail-mode s1 standalone")
     s2.cmd("ovs-vsctl set-fail-mode s2 standalone")
-
+    
+    """
     print("Running pingall...\n")
     net.pingAll()
 
-    # Print MAC tables BEFORE CLI
+    # Print MAC tables BEFORE VLAN Configuration
     print_fdb("s1")
     print_fdb("s2")
+    """
 
     """
-    #STP Check
+    # comment it for STP Check
     s1.cmd("ovs-vsctl set Bridge s1 stp_enable=true")
     s2.cmd("ovs-vsctl set Bridge s2 stp_enable=true")
     """
@@ -192,7 +244,7 @@ def topology():
     # net.pingAll()
     net.pingAll(timeout=0.5) #it takes less time compared to normal pingAll
 
-    # Print MAC tables After VALN Tagging
+    # Print MAC tables After VALN Configuration
     print_fdb("s1")
     print_fdb("s2")
     '''
@@ -205,6 +257,9 @@ def topology():
 
     #fetch ports in a particular vlan
     vlan_data = vlan_info(port_info)
+
+    #get statictics info about ports
+    stat_info = get_stats_info(port_name)
 
     CLI(net)
     net.stop()
