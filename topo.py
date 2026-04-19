@@ -7,16 +7,18 @@ import subprocess #run command in linux and gets output
 import csv
 
 def print_fdb(switch):
-    print("\n===== MAC TABLE for {} =====").format(switch)
+    #print("\n===== MAC TABLE for {} =====").format(switch)
 
     try:
+        mac_table = {}
         output = subprocess.check_output(
-            ["ovs-appctl", "fdb/show", switch]
+            ["ovs-appctl", "fdb/show", switch], text=True
         )
         entries = parse_fdb(output)
         for e in entries:
             #print(e)
-            data = {
+            mac = e["mac"]
+            mac_table[mac] = {
                 "event_type": "mac_entry",
                 "switch": switch,
                 "port": e["port"],
@@ -25,11 +27,9 @@ def print_fdb(switch):
                 "age": e["age"],
                 "timestamp": int(time.time())
             }
-            print(data)
 
-            '''print("Port: {}, MAC: {}, Age: {}").format(
-                e["port"], e["mac"], e["age"]
-            )'''
+        #print(mac_table)
+        return mac_table
 
     except Exception as e:
         print("Error:", e)
@@ -92,7 +92,7 @@ def get_portname():
         for bridge in subprocess.check_output(["ovs-vsctl", "list-br"]).decode("utf-8").split(): #it gives byte object as output without decode()
             ports = subprocess.check_output(["ovs-vsctl", "list-ports", bridge]).decode("utf-8").split() #give ports name associated with particular bridge
             #print(bridge, ports)
-            
+
             for port in ports: #converting unicode str into string
                 port_name.append(str(port))
         
@@ -170,6 +170,38 @@ def parse_stat_map(output):
 
     return result
 
+def neighbor_info():
+    try:
+        time.sleep(3) # it takes time to send LLDP packets, it is minimum time, I found by experimenting on it 
+        output = subprocess.check_output(
+            "lldpctl | grep -E 'Interface|PortDescr'",
+            shell=True
+        ).decode()
+        neighbor_detail = {}
+        current_iface = None
+
+        for line in output.splitlines():
+            line = line.strip()
+
+            # Detect Interface line
+            if line.startswith("Interface:"):
+                # split on ":" and take right part
+                parts = line.split("Interface:")[1].split(",")[0].strip()
+                current_iface = parts
+
+            # Detect PortDescr line
+            elif line.startswith("PortDescr:") and current_iface:
+                neighbor = line.split("PortDescr:")[1].strip()
+                if current_iface not in neighbor_detail:
+                    neighbor_detail[current_iface] = []
+                neighbor_detail[current_iface].append(neighbor)
+        
+        #print(f"LLDP Neighbor Info: {neighbor_detail}")
+        return neighbor_info
+    
+    except Exception as e:
+        print(f"Error is: {e}")
+
 def topology():
 
     net = Mininet(controller=None)
@@ -239,7 +271,7 @@ def topology():
     s1.cmd("ovs-vsctl set port s1-eth5 trunks=10,20 vlan_mode=trunk")
     s2.cmd("ovs-vsctl set port s2-eth5 trunks=10,20 vlan_mode=trunk")
 
-    '''
+
     print("Running pingall after VLAN tagging...\n")
     # net.pingAll()
     net.pingAll(timeout=0.5) #it takes less time compared to normal pingAll
@@ -247,7 +279,7 @@ def topology():
     # Print MAC tables After VALN Configuration
     print_fdb("s1")
     print_fdb("s2")
-    '''
+
 
     #fetch port_names
     port_name = get_portname()
@@ -261,6 +293,9 @@ def topology():
     #get statictics info about ports
     stat_info = get_stats_info(port_name)
 
+    #get neighbor info 
+    neigh_info = neighbor_info();
+    
     CLI(net)
     net.stop()
 
