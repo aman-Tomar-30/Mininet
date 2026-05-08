@@ -50,9 +50,7 @@ def run_cmd(cmd):
 # =========================================================
 
 def get_mac_table_entries(sw):
-    """
-    Fetch MAC table from OVS switch
-    """
+
     try:
         output = run_cmd(f"ovs-appctl fdb/show {sw}")
 
@@ -60,25 +58,28 @@ def get_mac_table_entries(sw):
 
         for line in output.splitlines():
 
-            # Example line:
-            #  1 00:00:00:00:00:01 2
+            # Example:
+            # port VLAN MAC                 Age
+            # 1    1     00:00:00:00:00:01 12
 
             match = re.search(
-                r"(\d+)\s+([0-9a-f:]{17})\s+(\d+)",
+                r"(\d+)\s+(\d+)\s+([0-9a-f:]{17})\s+(\d+)",
                 line,
                 re.IGNORECASE
             )
 
             if match:
-                vlan = match.group(1)
-                mac = match.group(2)
-                port = match.group(3)
+
+                port = match.group(1)
+                vlan = match.group(2)
+                mac = match.group(3)
+                age = int(match.group(4))
 
                 mac_entries.append({
                     "vlan": vlan,
                     "mac": mac,
                     "port": port,
-                    "timestamp": int(time.time())
+                    "age": age
                 })
 
         return mac_entries
@@ -155,24 +156,13 @@ def get_port_traffic(sw):
 # =========================================================
 
 def calculate_entry_age(mac_entries):
-    """
-    Estimate average MAC entry age
-    """
-
-    now = int(time.time())
 
     if not mac_entries:
         return 0
 
-    ages = []
+    ages = [entry["age"] for entry in mac_entries]
 
-    for entry in mac_entries:
-        age = now - entry["timestamp"]
-        ages.append(age)
-
-    avg_age = sum(ages) / len(ages)
-
-    return avg_age
+    return sum(ages) / len(ages)
 
 
 # =========================================================
